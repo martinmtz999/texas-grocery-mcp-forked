@@ -1,0 +1,32 @@
+# Remote read-only Texas Grocery MCP server image.
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir hatch
+
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+RUN hatch build -t wheel
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN useradd --create-home --shell /usr/sbin/nologin appuser
+
+COPY --from=builder /app/dist/*.whl ./
+RUN pip install --no-cache-dir ./*.whl && rm ./*.whl
+
+ENV LOG_LEVEL=INFO
+ENV PORT=8000
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+    CMD python -c "from texas_grocery_mcp.remote_server import mcp; print(mcp.name)" || exit 1
+
+CMD ["texas-grocery-mcp-remote"]
