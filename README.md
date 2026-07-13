@@ -350,6 +350,20 @@ Expected local MCP endpoint:
 http://localhost:8000/mcp
 ```
 
+
+### Lightweight store/product-only deployment
+
+If your host's free tier cannot run Playwright/Chromium, deploy the lightweight store/product server instead. This version is intended for exact item lookup at a specific store and exposes only `store_search`, `store_get_default`, `product_search`, `product_search_batch`, `product_get`, and health checks. It does not expose session, credential, cart, coupon, or account-changing tools.
+
+Build and run locally:
+
+```bash
+docker build -f Dockerfile.store -t texas-grocery-mcp-store .
+docker run --rm -p 8000:8000 -e HEB_DEFAULT_STORE=<your-store-id> texas-grocery-mcp-store
+```
+
+For Manufact or another host, use Dockerfile path `Dockerfile.store` and set `HEB_DEFAULT_STORE` to your store ID. Then product tools can return store-specific pricing and availability without H-E-B login. You can also pass `store_id` directly to `product_search`, `product_search_batch`, and `product_get`.
+
 ### Docker build and run
 
 Build the account-enabled remote image with the separate remote Dockerfile:

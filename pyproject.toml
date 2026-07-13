@@ -50,6 +50,7 @@ dev = [
 [project.scripts]
 texas-grocery-mcp = "texas_grocery_mcp.server:main"
 texas-grocery-mcp-remote = "texas_grocery_mcp.remote_server:main"
+texas-grocery-mcp-store = "texas_grocery_mcp.store_server:main"
 
 [project.urls]
 Homepage = "https://github.com/mgwalkerjr95/texas-grocery-mcp"
