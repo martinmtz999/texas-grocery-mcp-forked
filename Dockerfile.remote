@@ -1,4 +1,4 @@
-# Remote read-only Texas Grocery MCP server image.
+# Remote full Texas Grocery MCP server image for private account-enabled deployments.
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
@@ -17,7 +17,10 @@ WORKDIR /app
 RUN useradd --create-home --shell /usr/sbin/nologin appuser
 
 COPY --from=builder /app/dist/*.whl ./
-RUN pip install --no-cache-dir ./*.whl && rm ./*.whl
+RUN WHEEL="$(ls ./*.whl)" \
+    && pip install --no-cache-dir "${WHEEL}[browser]" \
+    && playwright install --with-deps chromium \
+    && rm "${WHEEL}"
 
 ENV LOG_LEVEL=INFO
 ENV PORT=8000
