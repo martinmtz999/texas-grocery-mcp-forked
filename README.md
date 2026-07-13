@@ -278,3 +278,135 @@ MIT © Michael Walker
 <p align="center">
   Made with ❤️ in Texas 🤠
 </p>
+
+---
+
+## 🌐 Remote Account-Enabled Streamable HTTP Server
+
+This repository also includes a hosted entry point for ChatGPT and other MCP clients that connect to a public Streamable HTTP MCP URL. The remote server is account-enabled and is named `texas-grocery-account`.
+
+The hosted version exposes grocery discovery plus the requested account/session tools:
+
+- `store_search`
+- `store_get_default`
+- `store_change`
+- `product_search`
+- `product_search_batch`
+- `product_get`
+- `session_status`
+- `session_save_credentials`
+- `session_refresh`
+- `session_clear_credentials`
+- `session_clear`
+- `health_live`
+- `health_ready`
+
+It still intentionally omits cart and coupon tools from this connector. The remote Docker image installs browser support for session refresh/login workflows.
+
+### Remote server warning
+
+⚠️ This project is **not affiliated with H-E-B**. It uses unofficial H-E-B interfaces that may change, reject traffic, rate limit requests, or trigger bot-detection. Use the hosted account-enabled server only for a private deployment you control. Do not send H-E-B passwords in normal chat; use `session_save_credentials` only when the MCP client presents it as a dedicated tool call.
+
+### Local installation for HTTP hosting
+
+```bash
+git clone https://github.com/mgwalkerjr95/texas-grocery-mcp.git
+cd texas-grocery-mcp
+python -m venv .venv
+source .venv/bin/activate
+pip install .
+```
+
+Browser support is installed in the remote Docker image for session refresh/login workflows. The Docker build explicitly installs the package browser extra and Chromium with `python -m pip install "playwright>=1.40.0"` and `python -m playwright install --with-deps chromium`.
+
+### Environment variables
+
+| Variable | Required | Description | Example |
+|----------|----------|-------------|---------|
+| `PORT` | No | HTTP listen port. Defaults to `8000`. | `8000` |
+| `LOG_LEVEL` | No | Logging level. | `INFO` |
+| `HEB_DEFAULT_STORE` | No | Optional default H-E-B store ID used when product tools are called without `store_id`. | `590` |
+| `HEB_EMAIL` | No | Optional H-E-B account email. Configure only as a private deployment secret, never in source control. | _secret_ |
+| `HEB_PASSWORD` | No | Optional H-E-B account password. Configure only as a private deployment secret, never in source control. | _secret_ |
+
+Copy the example file when deploying locally or to a host:
+
+```bash
+cp .env.remote.example .env
+```
+
+
+For hosted account login without sending your password through normal chat, configure `HEB_EMAIL` and `HEB_PASSWORD` as private deployment secrets in Manufact (or your hosting provider). `session_status` will then report `credential_storage_method: "environment"`, and `session_refresh()` can attempt automatic login without requiring `session_save_credentials` in ChatGPT. If a host mounts secrets as files instead of plain environment variables, set `HEB_EMAIL_FILE` and `HEB_PASSWORD_FILE` to the mounted file paths. `session_status` also returns a non-sensitive `environment_credentials` diagnostic object showing whether the email secret, password secret, and file-style secret variables are present, without returning the secret values.
+
+### Start locally over Streamable HTTP
+
+```bash
+PORT=8000 texas-grocery-mcp-remote
+```
+
+Expected local MCP endpoint:
+
+```text
+http://localhost:8000/mcp
+```
+
+### Docker build and run
+
+Build the account-enabled remote image with the separate remote Dockerfile:
+
+```bash
+docker build -f Dockerfile.remote -t texas-grocery-mcp-remote .
+```
+
+Run it locally:
+
+```bash
+docker run --rm -p 8000:8000 --env-file .env.remote.example texas-grocery-mcp-remote
+```
+
+The container documents port `8000` with `EXPOSE`, but the application reads the runtime `PORT` environment variable. If your hosting provider injects a different port, pass that value through as `PORT`.
+
+### Test with MCP Inspector
+
+After starting the server, use an MCP Inspector or compatible MCP client and point it at:
+
+```text
+http://localhost:8000/mcp
+```
+
+Verify that `session_status`, `session_save_credentials`, `session_refresh`, `session_clear_credentials`, `session_clear`, and `store_change` are present alongside the grocery discovery tools. Do not provide your H-E-B password unless the MCP client is invoking `session_save_credentials` as a dedicated tool call.
+
+### Manufact Cloud deployment
+
+1. Push this repository to GitHub.
+2. In Manufact Cloud, create a new service from the GitHub repository.
+3. Select Docker-based deployment and set the Dockerfile path to `Dockerfile.remote`.
+4. Configure environment variables:
+   - `PORT` if Manufact does not inject one automatically.
+   - `LOG_LEVEL=INFO`.
+   - Optional `HEB_DEFAULT_STORE=<store id>`.
+5. Do not put H-E-B credentials, cookies, tokens, browser storage, or account secrets in source control or deployment logs. Add credentials only through the `session_save_credentials` MCP tool when needed.
+6. Deploy the service.
+7. Open the service details and copy the public HTTPS base URL.
+8. Append `/mcp` to obtain the public MCP endpoint.
+
+Expected hosted endpoint format:
+
+```text
+https://<your-manufact-service-domain>/mcp
+```
+
+### Connect to ChatGPT developer mode
+
+1. Open ChatGPT developer mode / connector configuration.
+2. Add a custom MCP server.
+3. Choose Streamable HTTP transport if prompted.
+4. Paste the public Manufact URL ending in `/mcp`.
+5. Save and test the connection.
+6. Confirm ChatGPT sees `session_status`, `session_save_credentials`, `session_refresh`, `session_clear_credentials`, `session_clear`, and `store_change`.
+
+The original local STDIO command remains available and unchanged:
+
+```bash
+texas-grocery-mcp
+```

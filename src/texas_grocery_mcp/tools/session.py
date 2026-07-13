@@ -1,5 +1,6 @@
 """Session management tools for MCP."""
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,47 @@ from texas_grocery_mcp.auth.session import (
 from texas_grocery_mcp.utils.config import get_settings
 
 logger = structlog.get_logger()
+
+
+def _read_secret_value(name: str) -> str | None:
+    """Read a secret from an environment variable or a *_FILE secret mount."""
+    value = os.getenv(name)
+    if value and value.strip():
+        return value.strip()
+
+    file_value = os.getenv(f"{name}_FILE")
+    if file_value and file_value.strip():
+        try:
+            secret = Path(file_value.strip()).read_text(encoding="utf-8").strip()
+        except OSError as e:
+            logger.warning("Unable to read credential secret file", name=name, error=str(e))
+            return None
+        if secret:
+            return secret
+
+    return None
+
+
+def _get_env_credentials() -> tuple[str, str] | None:
+    """Return H-E-B credentials from deployment secrets when configured."""
+    email = _read_secret_value("HEB_EMAIL")
+    password = _read_secret_value("HEB_PASSWORD")
+    if email and password:
+        return email, password
+    return None
+
+
+def _get_env_credential_info() -> dict[str, Any]:
+    """Return non-sensitive deployment credential diagnostics."""
+    email_configured = _read_secret_value("HEB_EMAIL") is not None
+    password_configured = _read_secret_value("HEB_PASSWORD") is not None
+    return {
+        "email_configured": email_configured,
+        "password_configured": password_configured,
+        "email_file_configured": bool(os.getenv("HEB_EMAIL_FILE")),
+        "password_file_configured": bool(os.getenv("HEB_PASSWORD_FILE")),
+        "complete": email_configured and password_configured,
+    }
 
 
 async def session_status() -> dict[str, Any]:
@@ -50,6 +92,11 @@ async def session_status() -> dict[str, Any]:
     auth_dir = Path(settings.auth_state_path).expanduser().parent
     cred_store = CredentialStore(auth_dir)
     cred_info = cred_store.get_storage_info()
+    env_credential_info = _get_env_credential_info()
+    env_credentials_available = env_credential_info["complete"]
+    credential_storage_method = (
+        "environment" if env_credentials_available else cred_info["storage_method"]
+    )
 
     return {
         # Lifecycle status (new fields)
@@ -66,8 +113,9 @@ async def session_status() -> dict[str, Any]:
         "user_id": basic_info.get("user_id"),
         "cookies_count": basic_info.get("cookies_count", 0),
         # Credential storage info
-        "credentials_stored": cred_info["credentials_stored"],
-        "credential_storage_method": cred_info["storage_method"],
+        "credentials_stored": cred_info["credentials_stored"] or env_credentials_available,
+        "credential_storage_method": credential_storage_method,
+        "environment_credentials": env_credential_info,
     }
 
 
@@ -122,9 +170,14 @@ async def session_refresh(
     auth_path = Path(settings.auth_state_path).expanduser()
     auth_dir = auth_path.parent
 
-    # Check for saved credentials
+    # Check for saved credentials or deployment-provided environment secrets.
     cred_store = CredentialStore(auth_dir)
-    has_credentials = cred_store.has_credentials() if use_saved_credentials else False
+    env_credentials = _get_env_credentials() if use_saved_credentials else None
+    has_credentials = (
+        cred_store.has_credentials() or env_credentials is not None
+        if use_saved_credentials
+        else False
+    )
 
     # Try embedded Playwright first (fast path)
     if is_playwright_available():
@@ -144,8 +197,14 @@ async def session_refresh(
         except LoginRequiredError as e:
             # Session expired - try auto-login if we have credentials
             if has_credentials:
-                logger.info("Session expired, attempting auto-login with saved credentials")
-                credentials = cred_store.get()
+                credential_source = (
+                    "environment" if env_credentials is not None else "encrypted_file"
+                )
+                logger.info(
+                    "Session expired, attempting auto-login with credentials",
+                    credential_source=credential_source,
+                )
+                credentials = env_credentials or cred_store.get()
                 if credentials:
                     email, password = credentials
                     # Use visible browser for auto-login (needed for CAPTCHA handoff)
@@ -177,6 +236,7 @@ async def session_refresh(
                 "error": str(e),
                 "error_type": "login_required",
                 "credentials_available": has_credentials,
+                "environment_credentials": _get_env_credential_info(),
                 "suggestion": suggestion,
             }
 

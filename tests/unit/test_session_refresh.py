@@ -356,6 +356,72 @@ async def test_session_status_refresh_recommended(mock_auth_path, expiring_soon_
     assert result["time_remaining_hours"] < 4
 
 
+@pytest.mark.asyncio
+async def test_session_status_reports_environment_credentials(
+    mock_auth_path, monkeypatch: pytest.MonkeyPatch
+):
+    """session_status should report credentials supplied through deployment secrets."""
+    from texas_grocery_mcp.tools.session import session_status
+
+    monkeypatch.setenv("HEB_EMAIL", "user@example.com")
+    monkeypatch.setenv("HEB_PASSWORD", "secret-password")
+
+    result = await session_status()
+
+    assert result["credentials_stored"] is True
+    assert result["credential_storage_method"] == "environment"
+    assert result["environment_credentials"] == {
+        "email_configured": True,
+        "password_configured": True,
+        "email_file_configured": False,
+        "password_file_configured": False,
+        "complete": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_session_status_reports_partial_environment_credentials(
+    mock_auth_path, monkeypatch: pytest.MonkeyPatch
+):
+    """session_status should diagnose incomplete deployment secret configuration."""
+    from texas_grocery_mcp.tools.session import session_status
+
+    monkeypatch.setenv("HEB_EMAIL", "user@example.com")
+    monkeypatch.delenv("HEB_PASSWORD", raising=False)
+
+    result = await session_status()
+
+    assert result["credentials_stored"] is False
+    assert result["credential_storage_method"] == "encrypted_file"
+    assert result["environment_credentials"]["email_configured"] is True
+    assert result["environment_credentials"]["password_configured"] is False
+    assert result["environment_credentials"]["complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_session_status_reads_environment_credentials_from_secret_files(
+    mock_auth_path, tmp_path, monkeypatch: pytest.MonkeyPatch
+):
+    """Deployment secrets mounted as files should also count as environment credentials."""
+    from texas_grocery_mcp.tools.session import session_status
+
+    email_file = tmp_path / "heb-email"
+    password_file = tmp_path / "heb-password"
+    email_file.write_text("user@example.com\n")
+    password_file.write_text("secret-password\n")
+    monkeypatch.setenv("HEB_EMAIL_FILE", str(email_file))
+    monkeypatch.setenv("HEB_PASSWORD_FILE", str(password_file))
+    monkeypatch.delenv("HEB_EMAIL", raising=False)
+    monkeypatch.delenv("HEB_PASSWORD", raising=False)
+
+    result = await session_status()
+
+    assert result["credentials_stored"] is True
+    assert result["credential_storage_method"] == "environment"
+    assert result["environment_credentials"]["email_file_configured"] is True
+    assert result["environment_credentials"]["password_file_configured"] is True
+
+
 # =============================================================================
 # session_refresh() tool tests
 # =============================================================================
@@ -454,6 +520,72 @@ async def test_session_refresh_code_saves_to_correct_path(mock_auth_path, mock_n
     code = result["commands"][2]["parameters"]["code"]
     assert str(mock_auth_path) in code or result["auth_path"] in code
 
+
+
+@pytest.mark.asyncio
+async def test_session_refresh_reports_environment_credential_diagnostics(
+    mock_auth_path, monkeypatch: pytest.MonkeyPatch
+):
+    """Login-required refresh failures should include non-sensitive env credential diagnostics."""
+    from texas_grocery_mcp.auth.browser_refresh import LoginRequiredError
+    from texas_grocery_mcp.tools import session as session_tools
+
+    async def fake_refresh_session_with_browser(**_kwargs):  # type: ignore[no-untyped-def]
+        raise LoginRequiredError("login required")
+
+    monkeypatch.setattr(session_tools, "is_playwright_available", lambda: True)
+    monkeypatch.setattr(
+        session_tools,
+        "refresh_session_with_browser",
+        fake_refresh_session_with_browser,
+    )
+    monkeypatch.setenv("HEB_EMAIL", "user@example.com")
+    monkeypatch.delenv("HEB_PASSWORD", raising=False)
+
+    result = await session_tools.session_refresh()
+
+    assert result["status"] == "failed"
+    assert result["credentials_available"] is False
+    assert result["environment_credentials"]["email_configured"] is True
+    assert result["environment_credentials"]["password_configured"] is False
+
+
+@pytest.mark.asyncio
+async def test_session_refresh_uses_environment_credentials_before_file_credentials(
+    mock_auth_path, monkeypatch: pytest.MonkeyPatch
+):
+    """Environment credentials should be used for hosted auto-login when configured."""
+    from texas_grocery_mcp.auth.browser_refresh import LoginRequiredError
+    from texas_grocery_mcp.tools import session as session_tools
+
+    async def fake_refresh_session_with_browser(**_kwargs):  # type: ignore[no-untyped-def]
+        raise LoginRequiredError("login required")
+
+    captured: dict[str, str] = {}
+
+    async def fake_auto_login_with_credentials(**kwargs):  # type: ignore[no-untyped-def]
+        captured["email"] = kwargs["email"]
+        captured["password"] = kwargs["password"]
+        return {"success": True, "status": "success"}
+
+    monkeypatch.setattr(session_tools, "is_playwright_available", lambda: True)
+    monkeypatch.setattr(
+        session_tools,
+        "refresh_session_with_browser",
+        fake_refresh_session_with_browser,
+    )
+    monkeypatch.setattr(
+        session_tools,
+        "auto_login_with_credentials",
+        fake_auto_login_with_credentials,
+    )
+    monkeypatch.setenv("HEB_EMAIL", " env@example.com ")
+    monkeypatch.setenv("HEB_PASSWORD", " env-password ")
+
+    result = await session_tools.session_refresh()
+
+    assert result == {"success": True, "status": "success"}
+    assert captured == {"email": "env@example.com", "password": "env-password"}
 
 # =============================================================================
 # session_clear() tests
