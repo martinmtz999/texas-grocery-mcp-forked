@@ -1,4 +1,4 @@
-# Remote read-only Texas Grocery MCP server image.
+# Remote full Texas Grocery MCP server image for private account-enabled deployments.
 FROM python:3.11-slim AS builder
 
 WORKDIR /app
@@ -15,10 +15,18 @@ FROM python:3.11-slim
 WORKDIR /app
 
 RUN useradd --create-home --shell /usr/sbin/nologin appuser
-
 COPY --from=builder /app/dist/*.whl ./
-RUN pip install --no-cache-dir ./*.whl && rm ./*.whl
 
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+RUN WHEEL="$(find . -name '*.whl' -print -quit)" \
+    && python -m pip install --no-cache-dir "${WHEEL}[browser]" \
+    && python -m pip install --no-cache-dir "playwright>=1.40.0" \
+    && python -m playwright install --with-deps chromium \
+    && python -c "from texas_grocery_mcp.auth.browser_refresh import is_playwright_available; assert is_playwright_available()" \
+    && chmod -R a+rx /ms-playwright \
+    && rm ./*.whl
+    
 ENV LOG_LEVEL=INFO
 ENV PORT=8000
 
